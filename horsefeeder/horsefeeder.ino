@@ -1,5 +1,13 @@
+//#define GPIO_DEBUG
+
+#ifdef GPIO_DEBUG
+# include <gpio_viewer.h>
+  GPIOViewer gpio_viewer;
+#endif
+
 #include <Servo.h>
 #include <WiFi.h>
+
 
 unsigned int clock_rollover = 0;
 unsigned long previous_time_ms = 0L;
@@ -64,8 +72,12 @@ void activateFeeder() {
 
 
 void setup() {
+#ifdef GPIO_DEBUG
+  Serial.begin(115200);
+#else
   Serial.end();
-  
+#endif
+
   //set pin modes
   for (auto pin : active_feeders_led_pins)
     pinMode(pin, OUTPUT);
@@ -83,11 +95,18 @@ void setup() {
 
   //Save some power
   btStop(); //Disable bluetooth
+#ifndef GPIO_DEBUG
   WiFi.mode(WIFI_OFF); //Disable WiFi
+#endif
   setCpuFrequencyMhz(80); //Reduce CPU speed
 
   updateActiveFeedersLeds();
   updateHourLeds();
+
+#ifdef GPIO_DEBUG
+  gpio_viewer.connectToWifi("<ssid>", "<password>");
+  gpio_viewer.begin();
+#endif
 }
 
 void loop() {
