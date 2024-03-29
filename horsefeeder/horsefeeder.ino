@@ -30,8 +30,7 @@ unsigned long previous_buttonpress_ds = 0L;
 constexpr unsigned long buttonpress_grace_period_ds = 2L;
 constexpr unsigned long ONE_HOUR_IN_DS = 60*60*10L;
 
-volatile uint8_t active_feeders = 0;
-
+uint8_t active_feeders = 0;
 int previous_hours_left = 0;
 
 
@@ -46,13 +45,15 @@ unsigned long getDecisecondsSinceBoot() {
 }
 
 void updateActiveFeedersLeds() {
-  for (auto i=0; i<sizeof(active_feeders_led_pins)/sizeof(active_feeders_led_pins[0]); i++)
+  for (auto i=0; i<sizeof(active_feeders_led_pins)/sizeof(active_feeders_led_pins[0]); i++) {
     analogWrite(active_feeders_led_pins[i], i<active_feeders ? LED_ON : LED_OFF);
+  }
 }
 
 void updateHourLeds() {
-  for (auto i=0; i<sizeof(hour_led_pins)/sizeof(hour_led_pins[0]); i++)
+  for (auto i=0; i<sizeof(hour_led_pins)/sizeof(hour_led_pins[0]); i++) {
     analogWrite(hour_led_pins[i], i<previous_hours_left ? LED_ON : LED_OFF);
+  }
 }
 
 void activateFeeder() {
@@ -60,14 +61,17 @@ void activateFeeder() {
     servos[active_feeders-1].write(SERVO_OPEN_DEG);
     delay(2000);
     servos[active_feeders-1].write(SERVO_CLOSED_DEG);
-    active_feeders--;
 
+    active_feeders--;
     updateActiveFeedersLeds();
 
     previous_buttonpress_ds = getDecisecondsSinceBoot(); //Easiest way to reset timer..
-    previous_hours_left = active_feeders==0 ? 0 : 6;
-    updateHourLeds();
+  } else {
+    active_feeders = 0;
   }
+
+  previous_hours_left = (active_feeders > 0) ? 6 : 0;
+  updateHourLeds();
 }
 
 
@@ -121,6 +125,8 @@ void loop() {
     active_feeders++;
     if (active_feeders > SERVO_COUNT) {
       active_feeders = 0;
+      previous_hours_left = 0;
+      updateHourLeds();
     }
     updateActiveFeedersLeds();
   }
