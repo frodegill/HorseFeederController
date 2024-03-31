@@ -27,7 +27,8 @@ constexpr uint8_t LED_ON = 255;
 
 bool button_was_pressed = false;
 unsigned long previous_buttonpress_ds = 0L;
-constexpr unsigned long buttonpress_grace_period_ds = 2L;
+constexpr unsigned long buttonpress_grace_period_ds = 2L; //0.2 sec between each press (to avoid debouncing)
+constexpr unsigned long buttonpress_testmode_ds = 20L; //2.0 sec to toggle test mode and release first feeder
 constexpr unsigned long ONE_HOUR_IN_DS = 60*60*10L;
 
 uint8_t active_feeders = 0;
@@ -119,6 +120,10 @@ void loop() {
   bool button_currently_pressed = digitalRead(button_pin);
   if (button_was_pressed && !button_currently_pressed) {
     button_was_pressed = false;
+    if ((previous_buttonpress_ds+buttonpress_testmode_ds) < now_ds) { //Enable test mode if button pressed for long enough
+      active_feeders = 1;
+      activateFeeder();
+    }
   } else if (!button_was_pressed && button_currently_pressed && (previous_buttonpress_ds+buttonpress_grace_period_ds) < now_ds) {
     button_was_pressed = true;
     previous_buttonpress_ds = now_ds;
