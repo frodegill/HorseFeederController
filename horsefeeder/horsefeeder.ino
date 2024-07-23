@@ -1,21 +1,103 @@
 //#define GPIO_DEBUG
+//#define SERIAL_DEBUG
 
 #ifdef GPIO_DEBUG
 # include <gpio_viewer.h>
   GPIOViewer gpio_viewer;
 #endif
 
-#include <Servo.h>
 #include <WiFi.h>
+
+/** Start code taken from https://github.com/pablomarquez76/AnalogWrite_ESP32 ******************************************/
+#define NUM_CHANNELS (16)
+#define SERVO_FREQUENCY (50)
+#define SERVO_RESOLUTION (12)
+
+#define SERVO_MIN_PULSE_WIDTH (400)
+#define SERVO_MAX_PULSE_WIDTH (2500)
+#define SERVO_CLOSED_PULSE_WIDTH (SERVO_MIN_PULSE_WIDTH+100)
+#define SERVO_OPEN_PULSE_WIDTH (SERVO_MAX_PULSE_WIDTH-100)
+
+#define SERVO_MIN_TICKS 102
+#define SERVO_MAX_TICKS 512
+#define SERVO_OVERFLOW_PULSE_WIDTH 4000
+
+typedef struct analog_write_channel {
+  int8_t pin;
+  uint32_t frequency;
+  uint8_t resolution;
+} analog_write_channel_t;
+
+analog_write_channel_t _analog_write_channels[NUM_CHANNELS] = {
+  { -1, 5000, 8 },
+  { -1, 5000, 8 },
+  { -1, 5000, 8 },
+  { -1, 5000, 8 },
+  { -1, 5000, 8 },
+  { -1, 5000, 8 },
+  { -1, 5000, 8 },
+  { -1, 5000, 8 },
+  { -1, 5000, 8 },
+  { -1, 5000, 8 },
+  { -1, 5000, 8 },
+  { -1, 5000, 8 },
+  { -1, 5000, 8 },
+  { -1, 5000, 8 },
+  { -1, 5000, 8 },
+  { -1, 5000, 8 }
+};
+
+uint8_t analogWriteChannel(int8_t pin) {
+  uint8_t channel = NUM_CHANNELS;
+  // Check if pin already attached to a channel
+  for (uint8_t i = 0; i < NUM_CHANNELS; i++) {
+    if (_analog_write_channels[i].pin == pin) {
+      channel = i;
+      break;
+    }
+  }
+  // If not, attach it to a free channel
+  if (channel == NUM_CHANNELS) {
+    for (uint8_t i = 0; i < NUM_CHANNELS; i++) {
+      if (_analog_write_channels[i].pin == -1) {
+        _analog_write_channels[i].pin = pin;
+        channel = i;
+        ledcSetup(channel, _analog_write_channels[i].frequency, _analog_write_channels[i].resolution);
+        ledcAttachPin(pin, channel);
+        break;
+      }
+    }
+  }
+  return channel;
+}
+
+void analogServo(int8_t pin, uint32_t value) {
+  // Get channel
+  uint8_t channel = analogWriteChannel(pin);
+  // Make sure the pin was attached to a channel, if not do nothing
+  if (channel < NUM_CHANNELS) {
+    // Set frequency and resolution
+    if (_analog_write_channels[channel].frequency != SERVO_FREQUENCY || _analog_write_channels[channel].resolution != SERVO_RESOLUTION) {
+      _analog_write_channels[channel].frequency = SERVO_FREQUENCY;
+      _analog_write_channels[channel].resolution = SERVO_RESOLUTION;
+      ledcSetup(channel, _analog_write_channels[channel].frequency, _analog_write_channels[channel].resolution);
+    }
+
+    if (value < SERVO_OVERFLOW_PULSE_WIDTH) {
+      ledcWrite(channel, map(value, SERVO_MIN_PULSE_WIDTH, SERVO_MAX_PULSE_WIDTH, SERVO_MIN_TICKS, SERVO_MAX_TICKS));  // map ms to ticks
+    } else {
+      ledcWrite(channel, 0);
+    }
+  }
+}
+/** End code taken from https://github.com/pablomarquez76/AnalogWrite_ESP32 ******************************************/
+
 
 
 unsigned int clock_rollover = 0;
 unsigned long previous_time_ms = 0L;
 
 constexpr uint8_t SERVO_COUNT = 4;
-Servo servos[SERVO_COUNT];
-constexpr int SERVO_CLOSED_DEG = 0;
-constexpr int SERVO_OPEN_DEG = 180;
 
 constexpr uint8_t active_feeders_led_pins[SERVO_COUNT] = {19,21,23,22};
 constexpr uint8_t hour_led_pins[6] = {32,33,25,26,27,14};
@@ -59,9 +141,11 @@ void updateHourLeds() {
 
 void activateFeeder() {
   if (active_feeders > 0) {
-    servos[active_feeders-1].write(SERVO_OPEN_DEG);
+    analogServo(servo_control_pins[active_feeders-1], SERVO_OPEN_PULSE_WIDTH);
     delay(2000);
-    servos[active_feeders-1].write(SERVO_CLOSED_DEG);
+    analogServo(servo_control_pins[active_feeders-1], SERVO_CLOSED_PULSE_WIDTH);
+    delay(2000);
+    analogServo(servo_control_pins[active_feeders-1], SERVO_OVERFLOW_PULSE_WIDTH);  // detach
 
     active_feeders--;
     updateActiveFeedersLeds();
@@ -77,7 +161,7 @@ void activateFeeder() {
 
 
 void setup() {
-#ifdef GPIO_DEBUG
+#if defined(GPIO_DEBUG) || defined(SERIAL_DEBUG)
   Serial.begin(115200);
 #else
   Serial.end();
@@ -96,7 +180,7 @@ void setup() {
   pinMode(button_pin, INPUT_PULLDOWN);
 
   for (auto i=0; i<SERVO_COUNT; i++)
-    servos[i].attach(servo_control_pins[i]);
+    pinMode(servo_control_pins[i], OUTPUT);
 
   //Save some power
   btStop(); //Disable bluetooth
@@ -112,6 +196,16 @@ void setup() {
   gpio_viewer.connectToWifi("<ssid>", "<password>");
   gpio_viewer.begin();
 #endif
+
+#ifdef SERIAL_DEBUG
+  Serial.println("Starting horsefeeder");
+  Serial.flush();
+#endif
+
+  //Reset servers
+  for (uint8_t feeder=0;feeder<SERVO_COUNT; feeder++) {
+    analogServo(servo_control_pins[feeder], SERVO_CLOSED_PULSE_WIDTH);
+  }
 }
 
 void loop() {
@@ -121,8 +215,11 @@ void loop() {
   if (button_was_pressed && !button_currently_pressed) {
     button_was_pressed = false;
     if ((previous_buttonpress_ds+buttonpress_testmode_ds) < now_ds) { //Enable test mode if button pressed for long enough
-      active_feeders = 1;
-      activateFeeder();
+      for (int i=4; i>0; i--) {
+        active_feeders = i;
+        updateActiveFeedersLeds();
+        activateFeeder();
+      }
     }
   } else if (!button_was_pressed && button_currently_pressed && (previous_buttonpress_ds+buttonpress_grace_period_ds) < now_ds) {
     button_was_pressed = true;
